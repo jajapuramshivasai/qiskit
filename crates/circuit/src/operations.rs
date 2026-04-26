@@ -45,6 +45,85 @@ use pyo3::{IntoPyObjectExt, Python, intern};
 // `StandardGate` definitions to be in this file.
 pub use crate::standard_gate::*;
 
+
+
+//edit mc
+use qiskit_quantum_info::sparse_observable::BitTerm;
+use thiserror::Error;
+
+/// Error returned when converting BitTerm sequences to a Pauli product rotation.
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum PauliConversionError {
+    #[error("non-Pauli BitTerm encountered: {0:?}")]
+    NonPauliBitTerm(BitTerm),
+
+    #[error("all BitTerms are identity (I)")]
+    AllIdentity,
+}
+
+/// One-shot helper: convert BitTerm slice + angle -> PauliProductRotation.
+/// Returns Err if any BitTerm is not X/Y/Z or if the string is all identity.
+pub fn bit_terms_to_pauli_product_rotation(
+    bits: &[BitTerm],
+    angle: f64,
+) -> Result<PauliProductRotation, PauliConversionError> {
+    let mut z: Vec<bool> = Vec::with_capacity(bits.len());
+    let mut x: Vec<bool> = Vec::with_capacity(bits.len());
+
+    for &b in bits {
+        match b {
+            BitTerm::X => { z.push(false); x.push(true); }
+            BitTerm::Y => { z.push(true);  x.push(true); }
+            BitTerm::Z => { z.push(true);  x.push(false); }
+            other => return Err(PauliConversionError::NonPauliBitTerm(other)),
+        }
+    }
+
+    // Require at least one non-identity Pauli
+    if z.iter().all(|&zi| !zi) && x.iter().all(|&xi| !xi) {
+        return Err(PauliConversionError::AllIdentity);
+    }
+
+    Ok(PauliProductRotation {
+        z,
+        x,
+        angle: Param::Float(angle),
+    })
+}
+
+#[test]
+fn test_bit_terms_to_pauli_product_rotation_success() {
+    let bits = [BitTerm::X, BitTerm::Z, BitTerm::Y];
+    let angle = 0.75f64;
+
+    let ppr = bit_terms_to_pauli_product_rotation(&bits, angle)
+        .expect("conversion should succeed for pure Pauli bit terms");
+
+    assert_eq!(ppr.num_qubits(), 3);
+
+    let x_vec: Vec<bool> = ppr.x.iter().cloned().collect();
+    let z_vec: Vec<bool> = ppr.z.iter().cloned().collect();
+
+    assert_eq!(x_vec, vec![true, false, true]);
+    assert_eq!(z_vec, vec![false, true, true]);
+
+    match &ppr.angle {
+        Param::Float(f) => assert!((f - angle).abs() < 1e-12),
+        other => panic!("expected Param::Float, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_bit_terms_to_pauli_product_rotation_rejects_projector_terms() {
+    let bits = [BitTerm::Plus, BitTerm::X];
+    let res = bit_terms_to_pauli_product_rotation(&bits, 1.0);
+    assert!(matches!(res, Err(PauliConversionError::NonPauliBitTerm(_))));
+}
+
+
+
+
+
 #[derive(Clone, Debug)]
 pub enum Param {
     ParameterExpression(Arc<ParameterExpression>),
